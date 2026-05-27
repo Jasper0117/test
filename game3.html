@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>星光採集者</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: system-ui, "Microsoft JhengHei", sans-serif;
+      background: radial-gradient(circle at top, #1f2a44, #070b14 70%);
+      color: #f8fafc;
+      overflow: hidden;
+    }
+
+    .game {
+      width: min(94vw, 520px);
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 30px;
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .hud div {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid rgba(148, 163, 184, .25);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, .72);
+      font-weight: 800;
+    }
+
+    canvas {
+      width: 100%;
+      aspect-ratio: 5 / 7;
+      display: block;
+      border-radius: 10px;
+      border: 2px solid rgba(148, 163, 184, .35);
+      background: linear-gradient(#101827, #050814);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+      touch-action: none;
+    }
+
+    .controls {
+      margin-top: 12px;
+      color: #cbd5e1;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    button {
+      margin-top: 12px;
+      width: 160px;
+      height: 42px;
+      border: 0;
+      border-radius: 8px;
+      background: #38bdf8;
+      color: #082f49;
+      font-weight: 900;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <main class="game">
+    <h1>星光採集者</h1>
+
+    <section class="hud">
+      <div>分數：<span id="score">0</span></div>
+      <div>生命：<span id="lives">3</span></div>
+      <div>連擊：<span id="combo">0</span></div>
+    </section>
+
+    <canvas id="canvas" width="500" height="700"></canvas>
+    <button id="restart">重新開始</button>
+
+    <div class="controls">
+      滑鼠 / 觸控 / ← → 移動<br>
+      接住星星加分，避開紅色隕石
+    </div>
+  </main>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const scoreEl = document.getElementById("score");
+    const livesEl = document.getElementById("lives");
+    const comboEl = document.getElementById("combo");
+    const restartBtn = document.getElementById("restart");
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    let player;
+    let stars;
+    let particles;
+    let score;
+    let lives;
+    let combo;
+    let spawnTimer;
+    let gameOver;
+    let keys;
+
+    function resetGame() {
+      player = {
+        x: W / 2,
+        y: H - 70,
+        r: 25,
+        speed: 7
+      };
+
+      stars = [];
+      particles = [];
+      score = 0;
+      lives = 3;
+      combo = 0;
+      spawnTimer = 0;
+      gameOver = false;
+      keys = {};
+
+      updateHud();
+    }
+
+    function updateHud() {
+      scoreEl.textContent = score;
+      livesEl.textContent = lives;
+      comboEl.textContent = combo;
+    }
+
+    function random(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function spawnObject() {
+      const isMeteor = Math.random() < 0.24;
+
+      stars.push({
+        x: random(30, W - 30),
+        y: -30,
+        r: isMeteor ? random(18, 28) : random(12, 20),
+        speed: isMeteor ? random(3.4, 5.4) : random(2.4, 4.6),
+        type: isMeteor ? "meteor" : "star",
+        angle: random(0, Math.PI * 2),
+        spin: random(-0.08, 0.08)
+      });
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = "#050814";
+      ctx.fillRect(0, 0, W, H);
+
+      for (let i = 0; i < 60; i++) {
+        const x = (i * 83) % W;
+        const y = (i * 137 + performance.now() * 0.018) % H;
+        ctx.fillStyle = `rgba(255,255,255,${0.2 + (i % 5) * 0.08})`;
+        ctx.fillRect(x, y, 2, 2);
+      }
+    }
+
+    function drawPlayer() {
+      const gradient = ctx.createRadialGradient(
+        player.x - 8,
+        player.y - 10,
+        4,
+        player.x,
+        player.y,
+        player.r + 10
+      );
+
+      gradient.addColorStop(0, "#ffffff");
+      gradient.addColorStop(0.35, "#67e8f9");
+      gradient.addColorStop(1, "#2563eb");
+
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.r + 8, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(125, 211, 252, .35)";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+
+    function drawStar(obj) {
+      ctx.save();
+      ctx.translate(obj.x, obj.y);
+      ctx.rotate(obj.angle);
+
+      ctx.beginPath();
+
+      for (let i = 0; i < 10; i++) {
+        const radius = i % 2 === 0 ? obj.r : obj.r * 0.45;
+        const angle = i * Math.PI / 5;
+        ctx.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+      }
+
+      ctx.closePath();
+      ctx.fillStyle = "#facc15";
+      ctx.shadowColor = "#fde68a";
+      ctx.shadowBlur = 16;
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawMeteor(obj) {
+      ctx.save();
+      ctx.translate(obj.x, obj.y);
+      ctx.rotate(obj.angle);
+
+      ctx.beginPath();
+      ctx.arc(0, 0, obj.r, 0, Math.PI * 2);
+      ctx.fillStyle = "#ef4444";
+      ctx.shadowColor = "#f87171";
+      ctx.shadowBlur = 14;
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(127, 29, 29, .7)";
+      ctx.beginPath();
+      ctx.arc(-6, -4, obj.r * 0.28, 0, Math.PI * 2);
+      ctx.arc(7, 5, obj.r * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function makeParticles(x, y, color) {
+      for (let i = 0; i < 16; i++) {
+        particles.push({
+          x,
+          y,
+          vx: random(-3, 3),
+          vy: random(-4, 2),
+          life: 30,
+          color
+        });
+      }
+    }
+
+    function updateParticles() {
+      particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.12;
+        p.life--;
+      });
+
+      particles = particles.filter(p => p.life > 0);
+    }
+
+    function drawParticles() {
+      particles.forEach(p => {
+        ctx.globalAlpha = p.life / 30;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+    }
+
+    function distance(a, b) {
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    function update() {
+      if (keys.ArrowLeft) player.x -= player.speed;
+      if (keys.ArrowRight) player.x += player.speed;
+
+      player.x = Math.max(player.r, Math.min(W - player.r, player.x));
+
+      spawnTimer--;
+      if (spawnTimer <= 0 && !gameOver) {
+        spawnObject();
+        spawnTimer = Math.max(18, 48 - Math.floor(score / 120));
+      }
+
+      stars.forEach(obj => {
+        obj.y += obj.speed;
+        obj.angle += obj.spin;
+      });
+
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const obj = stars[i];
+
+        if (distance(player, obj) < player.r + obj.r) {
+          if (obj.type === "star") {
+            combo++;
+            score += 10 + combo * 2;
+            makeParticles(obj.x, obj.y, "#facc15");
+          } else {
+            lives--;
+            combo = 0;
+            makeParticles(obj.x, obj.y, "#ef4444");
+            if (lives <= 0) gameOver = true;
+          }
+
+          stars.splice(i, 1);
+          updateHud();
+          continue;
+        }
+
+        if (obj.y > H + 40) {
+          if (obj.type === "star") {
+            combo = 0;
+            updateHud();
+          }
+
+          stars.splice(i, 1);
+        }
+      }
+
+      updateParticles();
+    }
+
+    function drawGameOver() {
+      ctx.fillStyle = "rgba(2, 6, 23, .78)";
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.font = "bold 44px system-ui";
+      ctx.fillText("遊戲結束", W / 2, H / 2 - 24);
+
+      ctx.font = "bold 24px system-ui";
+      ctx.fillText(`最終分數：${score}`, W / 2, H / 2 + 22);
+    }
+
+    function loop() {
+      drawBackground();
+
+      if (!gameOver) update();
+
+      stars.forEach(obj => {
+        if (obj.type === "star") drawStar(obj);
+        else drawMeteor(obj);
+      });
+
+      drawParticles();
+      drawPlayer();
+
+      if (gameOver) drawGameOver();
+
+      requestAnimationFrame(loop);
+    }
+
+    document.addEventListener("keydown", event => {
+      keys[event.key] = true;
+    });
+
+    document.addEventListener("keyup", event => {
+      keys[event.key] = false;
+    });
+
+    canvas.addEventListener("mousemove", event => {
+      const rect = canvas.getBoundingClientRect();
+      player.x = (event.clientX - rect.left) / rect.width * W;
+    });
+
+    canvas.addEventListener("touchmove", event => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      player.x = (event.touches[0].clientX - rect.left) / rect.width * W;
+    }, { passive: false });
+
+    restartBtn.addEventListener("click", resetGame);
+
+    resetGame();
+    loop();
+  </script>
+</body>
+</html>
